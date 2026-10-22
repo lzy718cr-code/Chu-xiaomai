@@ -24,6 +24,7 @@ const periodId = ref(""), songs = ref([]), loading = ref(false), loadError = ref
 const items = ref([]), version = ref(0), remoteVersion = ref(0), baseline = ref("[]");
 const boardError = ref(""), boardReady = ref(false), updated = ref(null), saving = ref(false), exporting = ref(false);
 const storageAvailable = ref(true), candidateId = ref(""), order = ref("likes-desc"), count = ref(10), includeLocked = ref(false);
+const autoCount = ref(8), generating = ref(false);
 const options = computed(() => [...store.periods].sort((a,b) => Number(b.id === store.currentPeriod?.id) - Number(a.id === store.currentPeriod?.id)));
 const period = computed(() => options.value.find(p => p.id === periodId.value));
 const dirty = computed(() => JSON.stringify(items.value) !== baseline.value);
@@ -92,6 +93,33 @@ function addCandidate() {
   if (!candidateId.value) return ElMessage.warning("请先选择歌曲");
   if (items.value.length >= 500) return ElMessage.warning("一份播出歌单最多保存 500 首歌曲");
   items.value.push({ song_id: candidateId.value, status: "candidate" }); candidateId.value = "";
+}
+
+async function generateBroadcastList() {
+  if (generating.value || !boardReady.value || conflict.value) return;
+  if (dirty.value) {
+    try { await ElMessageBox.confirm("一键生成会清空当前未保存的歌单修改，确定继续？", "覆盖当前歌单", { type: "warning", confirmButtonText: "覆盖并生成", cancelButtonText: "取消" }); }
+    catch { return; }
+  }
+  generating.value = true;
+  try {
+    const fresh = await api.fetchSongs(periodId.value);
+    songs.value = fresh;
+    // 全部按票数降序
+    const ranked = fresh.sort((a, b) => b.likesCount - a.likesCount);
+    // 前 N 首未锁定的
+    const picked = ranked.filter(s => !s.isLocked);
+    const skipped = ranked.filter(s => s.isLocked);
+    const n = Math.max(1, Math.min(autoCount.value || 8, picked.length));
+    if (n === 0) throw new Error("没有未锁定的歌曲可生成");
+    items.value = picked.slice(0, n).map(s => ({ song_id: s.id, status: "confirmed" }));
+    const skipNote = skipped.length
+      ? `\n\n已自动跳过 ${skipped.length} 首被锁定的歌曲：\n` + skipped.slice(0, 5).map(s => `· ${s.title} / ${s.artist}（${s.likesCount} 票）`).join("\n") + (skipped.length > 5 ? ` 等 ${skipped.length} 首` : "")
+      : "";
+    ElMessage.success(`已自动生成 ${n} 首播出单（按票数自动跳过被锁定的歌曲）${skipNote}`);
+  } catch (e) {
+    ElMessage.error(e.message || "生成失败");
+  } finally { generating.value = false; }
 }
 function move(index, delta) {
   const target = index + delta;
@@ -185,7 +213,11 @@ onBeforeUnmount(() => { request++; window.removeEventListener("beforeunload", be
             <template #empty><el-empty description="从本期歌曲中加入候选，再确认播出与调整顺序" :image-size="60" /></template>
           </el-table>
         </fieldset>
-        <div class="toolbar export-actions"><el-button type="primary" :disabled="busy || !dirty || conflict" @click="save">保存播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', true)">复制播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', false)">下载播出 TXT</el-button></div>
+        <div class="toolbar">
+          <el-input-number v-model="autoCount" :min="1" :max="50" size="small" style="width:110px" />
+          <el-button type="success" :loading="generating" :disabled="busy || conflict" @click="generateBroadcastList">一键生成播出单（自动跳过锁定）</el-button>
+        </div>
+        <div class="toolbar export-actions"><el-button type="primary" :disabled="busy || !dirty || conflict" @click="save">保存播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', true)">复制播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', false)">下载播出 TXT</el-button></div></div>
         <p class="muted">只导出确认播出的歌曲，按表格顺序排列，保留确认时的歌名、歌手和票数；导出前自动保存修改并核对锁定状态。需要更新快照时，请先退回候选并保存，再重新确认。</p>
       </template>
     </el-card>
