@@ -40,6 +40,7 @@ const viewComponents = {
   announcements: defineAsyncComponent(() => import("../components/AnnouncementManage.vue")),
   anticheat: defineAsyncComponent(() => import("../components/AntiCheatPanel.vue")),
   automod: defineAsyncComponent(() => import("../components/AutoModerationPanel.vue")),
+  catalog: defineAsyncComponent(() => import("../components/SongCatalogPanel.vue")),
   export: defineAsyncComponent(() => import("../components/ExportPanel.vue")),
 };
 
@@ -51,6 +52,7 @@ const viewTitles = {
   announcements: "公告管理",
   anticheat: "防作弊明细",
   automod: "自动审核",
+  catalog: "音源曲库",
   export: "播出歌单与导出",
 };
 
@@ -95,6 +97,7 @@ onBeforeUnmount(() => clearInterval(clock));
         <el-menu-item index="announcements">公告</el-menu-item>
         <el-menu-item index="anticheat">防作弊明细</el-menu-item>
         <el-menu-item index="automod">自动审核</el-menu-item>
+        <el-menu-item index="catalog">音源曲库</el-menu-item>
         <el-menu-item index="export">播出歌单与导出</el-menu-item>
       </el-menu>
     </el-aside>

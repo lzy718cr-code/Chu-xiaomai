@@ -217,7 +217,7 @@ onBeforeUnmount(() => { request++; window.removeEventListener("beforeunload", be
           <el-input-number v-model="autoCount" :min="1" :max="50" size="small" style="width:110px" />
           <el-button type="success" :loading="generating" :disabled="busy || conflict" @click="generateBroadcastList">一键生成播出单（自动跳过锁定）</el-button>
         </div>
-        <div class="toolbar export-actions"><el-button type="primary" :disabled="busy || !dirty || conflict" @click="save">保存播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', true)">复制播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', false)">下载播出 TXT</el-button></div></div>
+        <div class="toolbar export-actions"><el-button type="primary" :disabled="busy || !dirty || conflict" @click="save">保存播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', true)">复制播出歌单</el-button><el-button :disabled="busy || !confirmed.length || conflict" @click="exportList('broadcast', false)">下载播出 TXT</el-button></div>
         <p class="muted">只导出确认播出的歌曲，按表格顺序排列，保留确认时的歌名、歌手和票数；导出前自动保存修改并核对锁定状态。需要更新快照时，请先退回候选并保存，再重新确认。</p>
       </template>
     </el-card>

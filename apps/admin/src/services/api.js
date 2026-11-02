@@ -73,6 +73,46 @@ export async function fetchSongs(periodId) {
   }
 }
 
+export async function fetchSongCatalog() {
+  const { data, error } = await supabase.from("song_catalog")
+    .select("id,title,artist,source_url,duration_seconds,is_available,is_active,notes,updated_at")
+    .order("title_lower").order("artist_lower");
+  if (error) throwWorkflowError(error);
+  return data ?? [];
+}
+
+export async function upsertSongCatalog(song) {
+  const { data, error } = await supabase.rpc("admin_upsert_song_catalog", {
+    p_id: song.id || null,
+    p_title: song.title.trim(),
+    p_artist: song.artist.trim(),
+    p_source_url: song.sourceUrl?.trim() || null,
+    p_duration_seconds: song.durationSeconds ? Number(song.durationSeconds) : null,
+    p_is_available: song.isAvailable === true,
+    p_is_active: song.isActive !== false,
+    p_notes: song.notes?.trim() || "",
+  });
+  if (error) throwWorkflowError(error);
+  return data;
+}
+
+export async function fetchPeriodCatalogPolicy(periodId) {
+  const { data, error } = await supabase.from("period_catalog_policies")
+    .select("period_id,whitelist_enabled,allowed_catalog_ids,updated_at")
+    .eq("period_id", periodId).maybeSingle();
+  if (error) throwWorkflowError(error);
+  return data ?? { period_id: periodId, whitelist_enabled: false, allowed_catalog_ids: [] };
+}
+
+export async function savePeriodCatalogPolicy(periodId, whitelistEnabled, allowedCatalogIds) {
+  const { error } = await supabase.rpc("admin_set_period_catalog_policy", {
+    p_period_id: periodId,
+    p_whitelist_enabled: whitelistEnabled === true,
+    p_allowed_catalog_ids: allowedCatalogIds,
+  });
+  if (error) throwWorkflowError(error);
+}
+
 // ---------- 公告 ----------
 
 export async function fetchAnnouncements() {

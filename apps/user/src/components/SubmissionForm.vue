@@ -15,8 +15,15 @@ const draft = draftStore.draft;
 const canMutate = computed(() => songsStore.canMutate);
 
 async function handleSubmit() {
-  const ok = await songsStore.submitSong(draft.title, draft.artist);
+  const ok = await songsStore.submitSong(draft.catalogId);
   if (ok) draftStore.clear();
+}
+
+function selectCatalogSong(id) {
+  const song = songsStore.catalogSongs.find((item) => item.id === id);
+  draft.catalogId = id;
+  draft.title = song?.title ?? "";
+  draft.artist = song?.artist ?? "";
 }
 
 function viewSubmission() {
@@ -48,27 +55,13 @@ function viewSubmission() {
 
     <ConnectionNotice />
     <form class="song-form" @submit.prevent="handleSubmit">
-      <label class="field">
-        <span>歌曲标题</span>
-        <input
-          v-model="draft.title"
-          type="text"
-          maxlength="80"
-          placeholder="例如：晴天"
-          :disabled="songsStore.isSubmitting"
-          required
-        />
-      </label>
-      <label class="field">
-        <span>歌手名称</span>
-        <input
-          v-model="draft.artist"
-          type="text"
-          maxlength="80"
-          placeholder="填写歌手或乐队名称"
-          :disabled="songsStore.isSubmitting"
-          required
-        />
+      <label class="field song-picker">
+        <span>选择可播歌曲</span>
+        <select v-model="draft.catalogId" :disabled="songsStore.isSubmitting || songsStore.catalogLoading" required @change="selectCatalogSong(draft.catalogId)">
+          <option value="">{{ songsStore.catalogLoading ? "正在读取可播歌曲…" : songsStore.catalogSongs.length ? "请选择歌曲" : "当前没有可播歌曲" }}</option>
+          <option v-for="song in songsStore.catalogSongs" :key="song.id" :value="song.id">{{ song.title }} · {{ song.artist }}{{ song.durationSeconds ? ` · ${Math.floor(song.durationSeconds / 60)}:${String(song.durationSeconds % 60).padStart(2, '0')}` : '' }}</option>
+        </select>
+        <small v-if="draft.catalogId" class="field-help">已选择：{{ draft.title }} · {{ draft.artist }}。投稿只接受广播台已确认有音源的歌曲。</small>
       </label>
       <button class="primary-button" type="submit" :disabled="songsStore.isSubmitting || !canMutate">
         {{ songsStore.isSubmitting ? "正在投递…" : "提交这首歌 ↗" }}
@@ -79,7 +72,7 @@ function viewSubmission() {
       :class="{ 'is-error': songsStore.formHintType === 'error', 'is-success': songsStore.formHintType === 'success' }"
       role="status"
     >
-      {{ songsStore.formHint || (draftStore.hasDraft ? (draftStore.storageAvailable ? "草稿已暂存在当前标签页，切换页面或刷新后可继续填写。" : "浏览器未允许保存草稿，刷新或关闭页面后可能丢失。") : "提交后会出现在榜单中，同一首歌请勿重复投稿。") }}
+      {{ songsStore.formHint || songsStore.catalogError || (draftStore.hasDraft ? (draftStore.storageAvailable ? "草稿已暂存在当前标签页，切换页面或刷新后可继续填写。" : "浏览器未允许保存草稿，刷新或关闭页面后可能丢失。") : "请选择可播歌曲后提交；没有音源的歌曲不会进入投稿。") }}
     </p>
     <button v-if="draftStore.hasDraft" class="text-link" type="button" :disabled="songsStore.isSubmitting" @click="draftStore.clear()">清空草稿</button>
     <button v-if="songsStore.formHintType === 'success' && songsStore.lastSubmission" class="text-link" type="button" @click="viewSubmission">查看刚提交的歌曲 ↗</button>

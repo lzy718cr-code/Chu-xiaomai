@@ -3,6 +3,7 @@ import { useAuthStore } from "./auth";
 import { usePeriodStore } from "./period";
 import {
   fetchSongs,
+  fetchSongCatalog,
   fetchMyLikes,
   fetchMyDislikes,
   submitSong,
@@ -32,6 +33,9 @@ function getDailyRecommendationKey(period, song) {
 export const useSongsStore = defineStore("songs", {
   state: () => ({
     songs: [],
+    catalogSongs: [],
+    catalogLoading: false,
+    catalogError: "",
     searchTerm: "",
     sortMode: "likes",
     currentPage: 1,
@@ -158,8 +162,11 @@ export const useSongsStore = defineStore("songs", {
       }
       const voterId = period.isTest ? authStore.testUser?.id : authStore.visitorId;
 
-      const [songs, likes, dislikes] = await Promise.all([
+      this.catalogLoading = true;
+      this.catalogError = "";
+      const [songs, catalogSongs, likes, dislikes] = await Promise.all([
         fetchSongs(period.id),
+        fetchSongCatalog(period.id),
         voterId ? fetchMyLikes(period.id, voterId) : Promise.resolve([]),
         voterId ? fetchMyDislikes(period.id, voterId) : Promise.resolve([]),
       ]);
@@ -168,6 +175,15 @@ export const useSongsStore = defineStore("songs", {
         return;
       }
       this.songs = songs;
+      this.catalogSongs = catalogSongs.map((song) => ({
+        id: song.id,
+        title: song.title ?? "",
+        artist: song.artist ?? "",
+        sourceUrl: song.source_url ?? "",
+        durationSeconds: Number(song.duration_seconds) || 0,
+        notes: song.notes ?? "",
+      }));
+      this.catalogLoading = false;
       this.likedSongIds = new Set(likes);
       this.dislikedSongIds = new Set(dislikes);
 
@@ -178,6 +194,9 @@ export const useSongsStore = defineStore("songs", {
 
     resetForNoPeriod() {
       this.songs = [];
+      this.catalogSongs = [];
+      this.catalogLoading = false;
+      this.catalogError = "";
       this.likedSongIds = new Set();
       this.dislikedSongIds = new Set();
       this.recommendedSongIds = [];
@@ -230,7 +249,7 @@ export const useSongsStore = defineStore("songs", {
       return true;
     },
 
-    async submitSong(title, artist) {
+    async submitSong(catalogId) {
       if (this.isSubmitting) return false;
       const authStore = useAuthStore();
       const periodStore = usePeriodStore();
@@ -241,12 +260,13 @@ export const useSongsStore = defineStore("songs", {
         this.formHint = authStore.identityError || "当前暂时无法投稿，请查看征集状态或刷新页面重试。";
         return false;
       }
-      if (!title.trim() || !artist.trim()) {
+      const catalogSong = this.catalogSongs.find((song) => song.id === catalogId);
+      if (!catalogSong) {
         this.formHintType = "error";
-        this.formHint = "请填写歌曲标题和歌手名称。";
+        this.formHint = "请先从可播歌曲库中选择歌曲。";
         return false;
       }
-      if (this.songs.some((song) => song.titleLower === normalizeText(title) && song.artistLower === normalizeText(artist))) {
+      if (this.songs.some((song) => song.titleLower === normalizeText(catalogSong.title) && song.artistLower === normalizeText(catalogSong.artist))) {
         this.formHintType = "error";
         this.formHint = "这首歌已经有人提交过啦，请勿重复投稿。";
         return false;
@@ -257,12 +277,11 @@ export const useSongsStore = defineStore("songs", {
       this.formHintType = "";
       try {
         const submitted = await submitSong({
-          title: title.trim(),
-          artist: artist.trim(),
+          catalogId,
           playlistDate: period.id,
           voterCookie: period.isTest ? authStore.testUser.id : authStore.visitorId,
         });
-        this.lastSubmission = { songId: submitted?.id, title: title.trim(), artist: artist.trim(), periodId: period.id };
+        this.lastSubmission = { songId: submitted?.id, title: catalogSong.title, artist: catalogSong.artist, periodId: period.id };
         try {
           await this.fetchAllData();
         } catch (error) {

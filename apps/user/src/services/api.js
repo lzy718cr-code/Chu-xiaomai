@@ -24,6 +24,12 @@ export async function fetchSongs(periodId) {
   return mapSongs(data);
 }
 
+export async function fetchSongCatalog(periodId) {
+  return (await readRequest("读取可播歌曲", (signal) => supabase.rpc("get_song_catalog", {
+    p_period_id: periodId,
+  }).abortSignal(signal))) ?? [];
+}
+
 export async function fetchMyLikes(periodId, voterCookie) {
   const data = await readRequest("读取个人喜欢记录", (signal) => supabase.rpc("get_my_likes", {
     p_playlist_date: periodId,
@@ -40,10 +46,9 @@ export async function fetchMyDislikes(periodId, voterCookie) {
   return (data ?? []).map((row) => typeof row === "string" ? row : row.song_id).filter(Boolean);
 }
 
-export async function submitSong({ title, artist, playlistDate, voterCookie }) {
-  const { data, error } = await supabase.rpc("submit_song", {
-    p_title: title,
-    p_artist: artist,
+export async function submitSong({ catalogId, playlistDate, voterCookie }) {
+  const { data, error } = await supabase.rpc("submit_song_from_catalog", {
+    p_catalog_id: catalogId,
     p_playlist_date: playlistDate,
     p_voter_cookie: voterCookie,
   });
