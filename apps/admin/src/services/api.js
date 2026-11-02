@@ -16,6 +16,60 @@ export async function isCurrentUserAdmin() {
   return data === true;
 }
 
+// ---------- 参与规则（数据库按每个账号、每期强制执行） ----------
+
+export async function fetchQqAccounts(search = "", page = 1) {
+  const { data, error } = await supabase.rpc("admin_list_qq_accounts", { p_search: search.trim(), p_offset: (page - 1) * 20, p_limit: 20 });
+  if (error) throwWorkflowError(error);
+  return data;
+}
+
+export async function fetchAccountModeration(accountId) {
+  const { data, error } = await supabase.rpc("admin_get_account_moderation", { p_account_id: accountId });
+  if (error) throwWorkflowError(error);
+  return data;
+}
+
+export async function moderateAccount({ accountId, action, reason, durationHours, expectedVersion }) {
+  const { error } = await supabase.rpc("admin_moderate_account", { p_account_id: accountId, p_action: action,
+    p_reason: reason.trim(), p_duration_hours: durationHours, p_expected_version: expectedVersion });
+  if (error) throwWorkflowError(error);
+}
+
+const participationColumns = "submission_cookie_per_period,max_likes_per_period";
+export const MAX_PARTICIPATION_LIMIT = 2147483647;
+
+export function participationLimitsError(limits) {
+  return [limits?.submissions, limits?.likes].every(value => Number.isInteger(value) && value >= 1 && value <= MAX_PARTICIPATION_LIMIT)
+    ? "" : "投稿上限和喜欢上限都须填写大于 0 的整数。";
+}
+
+function normalizeParticipationLimits(row) {
+  const limits = { submissions: row?.submission_cookie_per_period, likes: row?.max_likes_per_period };
+  if (participationLimitsError(limits)) throw new Error("参与规则尚未配置完整，请联系管理员检查数据库。");
+  return limits;
+}
+
+export async function fetchParticipationLimits() {
+  const { data, error } = await supabase.from("security_settings").select(participationColumns).eq("id", true).single();
+  if (error) throw error;
+  return normalizeParticipationLimits(data);
+}
+
+export async function saveParticipationLimits(limits, expected) {
+  const message = participationLimitsError(limits) || participationLimitsError(expected);
+  if (message) throw new Error(message);
+  // RLS permits only administrators. Compare both previous values so a second
+  // operator cannot silently overwrite a change made since opening this form.
+  const { data, error } = await supabase.from("security_settings")
+    .update({ submission_cookie_per_period: limits.submissions, max_likes_per_period: limits.likes, updated_at: new Date().toISOString() })
+    .eq("id", true).eq("submission_cookie_per_period", expected.submissions).eq("max_likes_per_period", expected.likes)
+    .select(participationColumns).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("规则已被其他管理员修改，或当前账号没有修改权限。请重新读取后再保存。");
+  return normalizeParticipationLimits(data);
+}
+
 // ---------- 征集期 ----------
 
 export async function fetchAllPeriods() {
@@ -74,11 +128,9 @@ export async function fetchSongs(periodId) {
 }
 
 export async function fetchSongCatalog() {
-  const { data, error } = await supabase.from("song_catalog")
+  return fetchEveryPage(() => supabase.from("song_catalog")
     .select("id,title,artist,source_url,duration_seconds,is_available,is_active,notes,updated_at")
-    .order("title_lower").order("artist_lower");
-  if (error) throwWorkflowError(error);
-  return data ?? [];
+    .order("title_lower").order("artist_lower").order("id"));
 }
 
 export async function upsertSongCatalog(song) {
@@ -98,17 +150,20 @@ export async function upsertSongCatalog(song) {
 
 export async function fetchPeriodCatalogPolicy(periodId) {
   const { data, error } = await supabase.from("period_catalog_policies")
-    .select("period_id,whitelist_enabled,allowed_catalog_ids,updated_at")
+    .select("period_id,whitelist_enabled,allowed_catalog_ids,starts_at,ends_at,version,updated_at")
     .eq("period_id", periodId).maybeSingle();
   if (error) throwWorkflowError(error);
-  return data ?? { period_id: periodId, whitelist_enabled: false, allowed_catalog_ids: [] };
+  return data ?? { period_id: periodId, whitelist_enabled: false, allowed_catalog_ids: [], starts_at: null, ends_at: null, version: 0 };
 }
 
-export async function savePeriodCatalogPolicy(periodId, whitelistEnabled, allowedCatalogIds) {
+export async function savePeriodCatalogPolicy(periodId, whitelistEnabled, allowedCatalogIds, startsAt, endsAt, version) {
   const { error } = await supabase.rpc("admin_set_period_catalog_policy", {
     p_period_id: periodId,
     p_whitelist_enabled: whitelistEnabled === true,
     p_allowed_catalog_ids: allowedCatalogIds,
+    p_starts_at: startsAt,
+    p_ends_at: endsAt,
+    p_version: version,
   });
   if (error) throwWorkflowError(error);
 }

@@ -4,8 +4,7 @@ import { usePeriodStore } from "./period";
 import {
   fetchSongs,
   fetchSongCatalog,
-  fetchMyLikes,
-  fetchMyDislikes,
+  fetchMyVotes,
   submitSong,
   toggleLike,
   toggleDislike,
@@ -34,13 +33,13 @@ export const useSongsStore = defineStore("songs", {
   state: () => ({
     songs: [],
     catalogSongs: [],
-    catalogLoading: false,
     catalogError: "",
     searchTerm: "",
     sortMode: "likes",
     currentPage: 1,
     likedSongIds: new Set(),
     dislikedSongIds: new Set(),
+    personalVotesAccount: "",
     likingSongId: "",
     dislikingSongId: "",
     isSubmitting: false,
@@ -60,6 +59,14 @@ export const useSongsStore = defineStore("songs", {
   }),
 
   getters: {
+    canVote() {
+      const state = useAuthStore().qqAccount?.moderation;
+      return this.canMutate && !state?.banned && !state?.vote_restricted;
+    },
+    canSubmit() {
+      const state = useAuthStore().qqAccount?.moderation;
+      return this.canMutate && !state?.banned && !state?.submission_restricted;
+    },
     pageCount(state) {
       return Math.max(1, Math.ceil(this.visibleSongs.length / SONGS_PER_PAGE));
     },
@@ -101,7 +108,9 @@ export const useSongsStore = defineStore("songs", {
       const periodStore = usePeriodStore();
       const period = periodStore.currentPeriod;
       if (this.isLoading || this.isRefreshing || this.errorMessage || this.refreshError || !authStore.backendReady || !period) return false;
-      if (period.isTest ? !authStore.isTester || !authStore.testUser?.id : !authStore.visitorId) return false;
+      if (!authStore.isQqLoggedIn || authStore.qqBusy) return false;
+      if (this.personalVotesAccount !== authStore.qqUser.openid) return false;
+      if (period.isTest && (!authStore.isTester || !authStore.testUser?.id)) return false;
       return periodStore.isWithinCurrentPeriod;
     },
   },
@@ -160,32 +169,29 @@ export const useSongsStore = defineStore("songs", {
         this.resetForNoPeriod();
         return;
       }
-      const voterId = period.isTest ? authStore.testUser?.id : authStore.visitorId;
-
-      this.catalogLoading = true;
-      this.catalogError = "";
-      const [songs, catalogSongs, likes, dislikes] = await Promise.all([
+      const account = authStore.qqUser?.openid;
+      const tester = authStore.testUser?.id;
+      // Failed/expired personal sessions must not prevent public browsing.
+      const [songs, catalog, votes] = await Promise.all([
         fetchSongs(period.id),
-        fetchSongCatalog(period.id),
-        voterId ? fetchMyLikes(period.id, voterId) : Promise.resolve([]),
-        voterId ? fetchMyDislikes(period.id, voterId) : Promise.resolve([]),
+        fetchSongCatalog(period.id).then(rows => ({ rows, error: "" })).catch(() => ({ rows: [], error: "可播曲库暂时无法读取，请刷新重试。" })),
+        account ? fetchMyVotes(period.id, period.isTest).catch((error) => {
+          if (authStore.qqUser?.openid === account) this.handleParticipationError(error);
+          return { likes: [], dislikes: [], failed: true };
+        }) : Promise.resolve({ likes: [], dislikes: [] }),
       ]);
-      if (period.isTest && (!authStore.isTester || authStore.testUser?.id !== voterId)) {
+      if (period.isTest && (!authStore.isTester || authStore.testUser?.id !== tester)) {
         this.resetForNoPeriod();
         return;
       }
+      if (usePeriodStore().currentPeriod?.id !== period.id) return;
       this.songs = songs;
-      this.catalogSongs = catalogSongs.map((song) => ({
-        id: song.id,
-        title: song.title ?? "",
-        artist: song.artist ?? "",
-        sourceUrl: song.source_url ?? "",
-        durationSeconds: Number(song.duration_seconds) || 0,
-        notes: song.notes ?? "",
-      }));
-      this.catalogLoading = false;
-      this.likedSongIds = new Set(likes);
-      this.dislikedSongIds = new Set(dislikes);
+      this.catalogSongs = catalog.rows;
+      this.catalogError = catalog.error;
+      const sameAccount = account === authStore.qqUser?.openid;
+      this.likedSongIds = new Set(sameAccount ? votes.likes : []);
+      this.dislikedSongIds = new Set(sameAccount ? votes.dislikes : []);
+      this.personalVotesAccount = sameAccount && account && !votes.failed ? account : "";
 
       this.ensureDailyRecommendations(period);
       this.currentPage = Math.min(this.currentPage, this.pageCount);
@@ -195,10 +201,10 @@ export const useSongsStore = defineStore("songs", {
     resetForNoPeriod() {
       this.songs = [];
       this.catalogSongs = [];
-      this.catalogLoading = false;
       this.catalogError = "";
       this.likedSongIds = new Set();
       this.dislikedSongIds = new Set();
+      this.personalVotesAccount = "";
       this.recommendedSongIds = [];
       this.recommendationDateKey = "";
       this.currentPage = 1;
@@ -208,6 +214,26 @@ export const useSongsStore = defineStore("songs", {
       this.formHint = "";
       this.formHintType = "";
       this.voteError = "";
+    },
+
+    clearPersonalState() {
+      this.likedSongIds = new Set();
+      this.dislikedSongIds = new Set();
+      this.personalVotesAccount = "";
+      this.voteError = "";
+      this.lastSubmission = null;
+      this.formHint = "";
+      this.formHintType = "";
+    },
+
+    handleParticipationError(error) {
+      if (error?.code === "qq_login_required") {
+        useAuthStore().qqUser = null;
+        useAuthStore().clearQqAccount();
+        this.clearPersonalState();
+      }
+      this.voteError = resolveErrorMessage(error);
+      if (["account_banned", "voting_restricted", "submission_restricted"].includes(error?.code)) useAuthStore().refreshQqAccount();
     },
 
     ensureDailyRecommendations(period) {
@@ -255,33 +281,36 @@ export const useSongsStore = defineStore("songs", {
       const periodStore = usePeriodStore();
       const period = periodStore.currentPeriod;
 
-      if (!this.canMutate) {
+      if (!this.canSubmit) {
         this.formHintType = "error";
-        this.formHint = authStore.identityError || "当前暂时无法投稿，请查看征集状态或刷新页面重试。";
+        this.formHint = !authStore.isQqLoggedIn ? "游客模式仅可浏览，请先 QQ 登录再投稿。" : authStore.qqAccount?.moderation?.banned || authStore.qqAccount?.moderation?.submission_restricted ? "该账号暂不能投稿，请到个人中心查看处理详情。" : "当前暂时无法投稿，请查看征集状态或刷新页面重试。";
         return false;
       }
-      const catalogSong = this.catalogSongs.find((song) => song.id === catalogId);
-      if (!catalogSong) {
+      const selected = this.catalogSongs.find(song => song.id === catalogId);
+      if (!selected) {
         this.formHintType = "error";
         this.formHint = "请先从可播歌曲库中选择歌曲。";
         return false;
       }
-      if (this.songs.some((song) => song.titleLower === normalizeText(catalogSong.title) && song.artistLower === normalizeText(catalogSong.artist))) {
+      const { title, artist } = selected;
+      if (this.songs.some((song) => song.titleLower === normalizeText(title) && song.artistLower === normalizeText(artist))) {
         this.formHintType = "error";
         this.formHint = "这首歌已经有人提交过啦，请勿重复投稿。";
         return false;
       }
 
       this.isSubmitting = true;
+      const account = authStore.qqUser.openid;
       this.formHint = "";
       this.formHintType = "";
       try {
         const submitted = await submitSong({
           catalogId,
           playlistDate: period.id,
-          voterCookie: period.isTest ? authStore.testUser.id : authStore.visitorId,
+          isTest: period.isTest,
         });
-        this.lastSubmission = { songId: submitted?.id, title: catalogSong.title, artist: catalogSong.artist, periodId: period.id };
+        if (authStore.qqUser?.openid !== account) return true;
+        this.lastSubmission = { songId: submitted?.id, title: title.trim(), artist: artist.trim(), periodId: period.id };
         try {
           await this.fetchAllData();
         } catch (error) {
@@ -295,6 +324,7 @@ export const useSongsStore = defineStore("songs", {
         this.formHint = "提交成功！这首歌已经出现在歌单里了。";
         return true;
       } catch (error) {
+        this.handleParticipationError(error);
         this.formHintType = "error";
         this.formHint = resolveErrorMessage(error);
         return false;
@@ -304,10 +334,12 @@ export const useSongsStore = defineStore("songs", {
     },
 
     async toggleLikeSong(song) {
-      if (!this.canMutate || song.isLocked || this.likingSongId || this.dislikingSongId) return;
+      if (!useAuthStore().isQqLoggedIn) { this.voteError = "游客模式仅可浏览，请先 QQ 登录再点喜欢。"; return false; }
+      if (!this.canVote || song.isLocked || this.likingSongId || this.dislikingSongId) return;
       const authStore = useAuthStore();
       const periodStore = usePeriodStore();
       const period = periodStore.currentPeriod;
+      const account = authStore.qqUser.openid;
       const isLiked = this.likedSongIds.has(song.id);
       const action = isLiked ? "off" : "on";
 
@@ -317,9 +349,10 @@ export const useSongsStore = defineStore("songs", {
         await toggleLike({
           songId: song.id,
           playlistDate: period.id,
-          voterCookie: period.isTest ? authStore.testUser.id : authStore.visitorId,
+          isTest: period.isTest,
           action,
         });
+        if (authStore.qqUser?.openid !== account) return;
         if (action === "on") {
           this.likedSongIds.add(song.id);
           if (this.dislikedSongIds.has(song.id)) song.dislikesCount = Math.max(0, song.dislikesCount - 1);
@@ -330,17 +363,19 @@ export const useSongsStore = defineStore("songs", {
           song.likesCount = Math.max(0, song.likesCount - 1);
         }
       } catch (error) {
-        this.voteError = resolveErrorMessage(error);
+        this.handleParticipationError(error);
       } finally {
         this.likingSongId = "";
       }
     },
 
     async toggleDislikeSong(song, reason = "") {
-      if (!this.canMutate || song.isLocked || this.dislikingSongId || this.likingSongId) return;
+      if (!useAuthStore().isQqLoggedIn) { this.voteError = "游客模式仅可浏览，请先 QQ 登录再点踩。"; return false; }
+      if (!this.canVote || song.isLocked || this.dislikingSongId || this.likingSongId) return;
       const authStore = useAuthStore();
       const periodStore = usePeriodStore();
       const period = periodStore.currentPeriod;
+      const account = authStore.qqUser.openid;
       const isDisliked = this.dislikedSongIds.has(song.id);
       const action = isDisliked ? "off" : "on";
 
@@ -355,10 +390,11 @@ export const useSongsStore = defineStore("songs", {
         await toggleDislike({
           songId: song.id,
           playlistDate: period.id,
-          voterCookie: period.isTest ? authStore.testUser.id : authStore.visitorId,
+          isTest: period.isTest,
           action,
           reason: action === "on" ? reason.trim().slice(0, 20) : null,
         });
+        if (authStore.qqUser?.openid !== account) return false;
         if (action === "on") {
           this.dislikedSongIds.add(song.id);
           if (this.likedSongIds.has(song.id)) song.likesCount = Math.max(0, song.likesCount - 1);
@@ -370,7 +406,7 @@ export const useSongsStore = defineStore("songs", {
         }
         return true;
       } catch (error) {
-        this.voteError = resolveErrorMessage(error);
+        this.handleParticipationError(error);
         return false;
       } finally {
         this.dislikingSongId = "";

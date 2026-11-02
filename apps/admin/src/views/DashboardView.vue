@@ -37,6 +37,8 @@ const viewComponents = {
   songs: defineAsyncComponent(() => import("../components/SongTable.vue")),
   reports: defineAsyncComponent(() => import("../components/ReportReview.vue")),
   periods: defineAsyncComponent(() => import("../components/PeriodManage.vue")),
+  participation: defineAsyncComponent(() => import("../components/ParticipationRules.vue")),
+  accounts: defineAsyncComponent(() => import("../components/AccountModeration.vue")),
   announcements: defineAsyncComponent(() => import("../components/AnnouncementManage.vue")),
   anticheat: defineAsyncComponent(() => import("../components/AntiCheatPanel.vue")),
   automod: defineAsyncComponent(() => import("../components/AutoModerationPanel.vue")),
@@ -49,6 +51,8 @@ const viewTitles = {
   songs: "歌曲管理",
   reports: "举报审核",
   periods: "征集期管理",
+  participation: "参与规则",
+  accounts: "账号管理",
   announcements: "公告管理",
   anticheat: "防作弊明细",
   automod: "自动审核",
@@ -94,6 +98,8 @@ onBeforeUnmount(() => clearInterval(clock));
         <el-menu-item index="songs">歌曲管理</el-menu-item>
         <el-menu-item index="reports">举报审核</el-menu-item>
         <el-menu-item index="periods">征集期</el-menu-item>
+        <el-menu-item index="participation">参与规则</el-menu-item>
+        <el-menu-item index="accounts">账号管理</el-menu-item>
         <el-menu-item index="announcements">公告</el-menu-item>
         <el-menu-item index="anticheat">防作弊明细</el-menu-item>
         <el-menu-item index="automod">自动审核</el-menu-item>
