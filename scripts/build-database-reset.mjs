@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
 const root = new URL("../", import.meta.url);
-export const sourceFiles = ["supabase-schema.sql", "supabase-admin-workflow.sql", "supabase-database-integrity.sql", "supabase-test-mode.sql", "supabase-qq-participation.sql", "supabase-account-moderation.sql", "supabase-song-catalog.sql"];
+export const sourceFiles = ["supabase-schema.sql", "supabase-admin-workflow.sql", "supabase-database-integrity.sql", "supabase-test-mode.sql", "supabase-qq-participation.sql", "supabase-account-moderation.sql", "supabase-song-catalog.sql", "supabase-daily-period.sql"];
 const resetTables = ["period_catalog_policies","song_reports", "song_dislikes", "song_likes", "broadcast_playlists", "songs", "announcements", "vote_attempts", "api_request_attempts", "playlist_periods", "admin_action_log", "database_repair_archive", "security_settings", "test_accounts"];
 
 export function buildResetSql() {

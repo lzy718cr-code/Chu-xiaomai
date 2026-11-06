@@ -76,7 +76,7 @@ declare item record;
 begin
   for item in select p.oid,p.proname,pg_get_function_identity_arguments(p.oid) args
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-    where n.nspname='public' and p.prokind='f' and p.proname=any(array['repair_duplicate_songs','request_client_ip','assert_valid_voter_cookie','record_rate_limited_attempt','get_my_likes','get_my_dislikes','apply_song_vote','toggle_song_like','toggle_song_dislike','submit_song','review_song_report','admin_create_playlist_period','admin_update_song','admin_set_song_lock','admin_review_song_report','admin_update_playlist_period','admin_archive_playlist_period','admin_save_broadcast_playlist','sync_period_reference','consume_api_attempt','purge_expired_request_attempts','guard_vote_sentiment','is_current_user_tester','can_read_period','assert_test_period_access','admin_list_test_accounts','admin_set_test_account','admin_set_period_test_mode','qq_participate','qq_moderation_state','assert_qq_account_allowed','admin_list_qq_accounts','admin_get_account_moderation','admin_moderate_account','qq_account_status','qq_read_account_notice','qq_moderation_health','get_song_catalog','admin_upsert_song_catalog','admin_set_period_catalog_policy','submit_song_from_catalog','qq_catalog_health','report_song'])
+    where n.nspname='public' and p.prokind='f' and p.proname=any(array['repair_duplicate_songs','request_client_ip','assert_valid_voter_cookie','record_rate_limited_attempt','get_my_likes','get_my_dislikes','apply_song_vote','toggle_song_like','toggle_song_dislike','submit_song','review_song_report','admin_create_playlist_period','admin_update_song','admin_set_song_lock','admin_review_song_report','admin_update_playlist_period','admin_archive_playlist_period','admin_save_broadcast_playlist','sync_period_reference','consume_api_attempt','purge_expired_request_attempts','guard_vote_sentiment','is_current_user_tester','can_read_period','assert_test_period_access','admin_list_test_accounts','admin_set_test_account','admin_set_period_test_mode','qq_participate','qq_moderation_state','assert_qq_account_allowed','admin_list_qq_accounts','admin_get_account_moderation','admin_moderate_account','qq_account_status','qq_read_account_notice','qq_moderation_health','get_song_catalog','admin_upsert_song_catalog','admin_set_period_catalog_policy','submit_song_from_catalog','qq_catalog_health','admin_prepare_daily_period','report_song'])
   loop
     execute format('drop function public.%I(%s)',item.proname,item.args);
   end loop;
@@ -2619,6 +2619,58 @@ returns jsonb language sql stable security definer set search_path=public as $$
 $$;
 revoke all on function public.qq_catalog_health() from public,anon,authenticated;
 grant execute on function public.qq_catalog_health() to service_role;
+notify pgrst, 'reload schema';
+
+-- ===== supabase-daily-period.sql =====
+-- Incremental migration: daily collection helper. Keeps all existing periods and songs.
+-- Requires admin-workflow, database-integrity and test-mode migrations.
+
+create or replace function public.admin_prepare_daily_period(
+  p_target_date date, p_title text, p_start_time time, p_end_time time,
+  p_expected_current_id uuid, p_expected_updated_at timestamptz
+)
+returns jsonb language plpgsql security definer set search_path=public as $$
+declare
+  today date;
+  day_start timestamptz;
+  day_end timestamptz;
+  start_at timestamptz;
+  end_at timestamptz;
+  previous public.playlist_periods%rowtype;
+  new_id uuid;
+begin
+  if public.is_current_user_admin() is not true then raise exception 'Admin permission required.'; end if;
+  -- Same lock as the existing creator, also excluding edits, archives and mode changes.
+  lock table public.playlist_periods in share row exclusive mode;
+  today = (clock_timestamp() at time zone 'Asia/Shanghai')::date;
+  if p_target_date is null or p_target_date not in (today, today + 1) then
+    raise exception '日期已变化，请重新选择今天或明天。';
+  end if;
+  if p_title is null or length(btrim(p_title)) not between 1 and 80
+    or p_start_time is null or p_end_time is null or p_end_time <= p_start_time or p_end_time >= time '24:00' then
+    raise exception '请填写标题和当天有效的征集时间，结束时间须晚于开始时间。';
+  end if;
+  day_start = p_target_date::timestamp at time zone 'Asia/Shanghai';
+  day_end = (p_target_date + 1)::timestamp at time zone 'Asia/Shanghai';
+  start_at = (p_target_date + p_start_time) at time zone 'Asia/Shanghai';
+  end_at = (p_target_date + p_end_time) at time zone 'Asia/Shanghai';
+  if end_at <= clock_timestamp() then raise exception '结束时间已经过去，请调整时间或选择明天。'; end if;
+  select * into previous from public.playlist_periods where status='active';
+  if coalesce(previous.is_test,false) then raise exception '当前为测试期，请到征集期管理确认正式开放安排。'; end if;
+  -- Retried saves and a second operator reuse the existing day, preserving submissions.
+  if previous.starts_at < day_end and previous.ends_at > day_start then
+    return jsonb_build_object('id', previous.id, 'created', false);
+  end if;
+  if previous.starts_at >= day_end then raise exception '已有更晚日期的征集安排，请到征集期管理核对。'; end if;
+  if previous.id is distinct from p_expected_current_id or previous.updated_at is distinct from p_expected_updated_at then
+    raise exception '征集安排已被其他管理员修改，请重新读取后再确认。';
+  end if;
+  new_id = public.admin_create_playlist_period(p_title, start_at, end_at);
+  return jsonb_build_object('id', new_id, 'created', true);
+end;
+$$;
+revoke all on function public.admin_prepare_daily_period(date,text,time,time,uuid,timestamptz) from public,anon,authenticated;
+grant execute on function public.admin_prepare_daily_period(date,text,time,time,uuid,timestamptz) to authenticated;
 notify pgrst, 'reload schema';
 
 notify pgrst, 'reload schema';

@@ -9,19 +9,22 @@ import "element-plus/es/components/main/style/css";
 import "element-plus/es/components/menu/style/css";
 import "element-plus/es/components/menu-item/style/css";
 import "element-plus/es/components/tag/style/css";
-import { computed, defineAsyncComponent, onMounted, onBeforeUnmount } from "vue";
+import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { useAdminStore } from "../stores/admin";
 import OverviewPanel from "../components/OverviewPanel.vue";
+import DailyPeriodDialog from "../components/DailyPeriodDialog.vue";
 
 const authStore = useAuthStore();
 const adminStore = useAdminStore();
 const router = useRouter();
 const route = useRoute();
+const dailyPeriodDialog = ref(null);
 
 const activeView = computed(() => Object.hasOwn(viewComponents, route.query.view) ? route.query.view : "overview");
 function selectView(view, action) {
+  if (action === "daily") { dailyPeriodDialog.value?.open(); return; }
   router.replace({ query: { ...route.query, view, action: typeof action === "string" ? action : undefined } });
 }
 const frontendUrl = import.meta.env.VITE_USER_URL || (import.meta.env.DEV ? `${location.protocol}//${location.hostname}:5173/` : new URL("/", location.origin).href);
@@ -132,4 +135,5 @@ onBeforeUnmount(() => clearInterval(clock));
       </el-main>
     </el-container>
   </el-container>
+  <DailyPeriodDialog ref="dailyPeriodDialog" @navigate="selectView" />
 </template>

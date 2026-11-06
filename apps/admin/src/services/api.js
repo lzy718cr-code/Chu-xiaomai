@@ -92,6 +92,20 @@ export async function createPeriod({ title, startsAt, endsAt }) {
   return data;
 }
 
+export async function prepareDailyPeriod(draft, currentPeriod) {
+  const { data, error } = await supabase.rpc("admin_prepare_daily_period", {
+    p_target_date: draft.date, p_title: draft.title.trim(),
+    p_start_time: draft.startTime, p_end_time: draft.endTime,
+    p_expected_current_id: currentPeriod?.id ?? null,
+    p_expected_updated_at: currentPeriod?.updatedAt ?? null,
+  });
+  if (["PGRST202", "42883"].includes(error?.code)) {
+    throw new Error("每日征集功能尚未启用，请执行增量迁移 supabase-daily-period.sql 后重试。");
+  }
+  if (error) throw error;
+  return data;
+}
+
 export async function archivePeriod(periodId) {
   const { error } = await supabase.rpc("admin_archive_playlist_period", { p_period_id: periodId });
   if (error) throwWorkflowError(error);
@@ -314,6 +328,7 @@ export function normalizePeriod(period) {
     status: period.status ?? "archived",
     isTest: period.is_test === true,
     createdAtMs: Date.parse(period.created_at ?? "") || 0,
+    updatedAt: period.updated_at ?? null,
     archivedAtMs: Date.parse(period.archived_at ?? "") || 0,
   };
 }
